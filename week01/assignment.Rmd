@@ -1,0 +1,23 @@
+---
+title: "Assignment"
+author: "Kaisu Hiltunen"
+date: "2023-02-24"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Load packages
+
+```{r cars}
+library(epiwraps)
+```
+
+## Print session info
+
+```{r pressure, echo=FALSE}
+sessionInfo()
+```
+
