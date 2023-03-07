@@ -107,7 +107,7 @@ exsPerTx
 # what are the transcripts that have more than on exon / sub-element:
 head(which(lengths(exsPerTx)>1))
 
-exsPerTx[["FBtr0005088"]]
+exsPerTx[["ENSMUST00000000003"]]
 ```
 
 How many transcripts do protein-coding genes have?
@@ -117,10 +117,21 @@ nbExonsPerPCtx <- lengths(exsPerTx)
 hist(nbExonsPerPCtx)
 ```
 
+How long are the protein coding genes?
+```{r}
+#retrieve all the lengths of exons for each transcript
+exPerTx_widths<-width(exsPerTx)
+#sum over all the rows
+spliced_lengths<-sum(exPerTx_widths)
+#plot the histogram
+hist(spliced_lengths)
+```
+
 Selecting transcripts from one chromosome:
 
 ```{r}
 txs_2L <- txs[seqnames(txs)=="2L"] 
+txs_2L
 ```
 
 Example of overlapping GRanges objects:
