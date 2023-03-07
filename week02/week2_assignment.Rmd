@@ -56,12 +56,7 @@ dnasm_mus
 ```{r}
 # extract transcripts and genes:
 txs <- transcripts(ensdb_mus)
-txs
 gns<-genes(ensdb_mus)
-gns
-
-
-seqlevels(txs)
 
 ```
 # 2. Reading the ensembl object
@@ -69,6 +64,7 @@ seqlevels(txs)
 
 
 ```{r, include=FALSE}
+#seqlevels(txs)
 #head(txs$tx_biotype)
 #head(txs[,"tx_biotype"])
 #table(seqnames(txs))
@@ -90,16 +86,17 @@ print(paste0("Number of protein coding genes: ",length(txs_pc)))
 ## Plot the distribution of the (spliced) length of protein-coding transcripts
 First, we extract exons of protein-coding transcripts from the database. Then, we split them by transcript, before summing the width of the exons of each transcript.
 
-```{r}
-# supportedFilters(), tx_biotype
-
+```{r, include=FALSE}
+#return exons
 exs <- exons(ensdb_mus, column=c("tx_id"))
-exs
 
 # same as "exons()" but returning the exons split by transcripts
 exsPerTx <- exonsBy(ensdb_mus, column=c("tx_id","tx_biotype"))
-# we limit ourselves to protein-coding transcripts:
+```
 
+
+```{r}
+# we limit ourselves to protein-coding transcripts:
 exsPerTx <- exonsBy(ensdb_mus, column=c("tx_id","tx_biotype"), filter=TxBiotypeFilter("protein_coding"))
 
 exsPerTx
@@ -123,8 +120,9 @@ How long are the protein coding genes?
 exPerTx_widths<-width(exsPerTx)
 #sum over all the rows
 spliced_lengths<-sum(exPerTx_widths)
+max(spliced_lengths)
 #plot the histogram
-hist(spliced_lengths)
+hist(spliced_lengths, breaks = 100)
 ```
 
 Selecting transcripts from one chromosome:
