@@ -1,0 +1,138 @@
+---
+title: "Week2: playing with annotations"
+author: "Pierre-Luc"
+date: "3/4/2023"
+output: html_document
+---
+
+```{r}
+suppressPackageStartupMessages({
+  library(AnnotationHub)
+  library(ensembldb)
+  library(GenomicRanges)
+  library(epiwraps)
+})
+```
+
+# 1. Fetching the gene annotation data
+
+The following objects are downloaded below:
+1. dnasm_dorso
+The  drosophila melanogaster genome sequence ( dna_sm ) in TwoBit/2bit format for BDGP6.
+
+2. ensdb_mus
+The mouse (Mus Musculus) EnsDb object, version 102, genome build GRCm38.
+
+3.dnasm_mus
+The mouse genome sequence ( dna_sm ) in TwoBit/2bit format for GRCm38.
+```{r}
+ah <- AnnotationHub()
+
+#Retrieve the hits for Dorsophilia melagoaster genome sequence
+#from the AnnotationHub
+q <- query(ah, c("Drosophila melanogaster", "ensembl", "BDGP6","2bit","dna_sm"))
+q
+#save the AH49674 in dnasm_dorso object
+dnasm_dorso <- ah[["AH49674"]]
+dnasm_dorso
+```
+```{r}
+#Retrive the hits for Mus Musculus Ensdb object
+q2 <- query(ah, c("Mus Musculus", "ensDb", "version 102", "GRCm38"))
+q2
+#Save the result in ensdb_mus object
+ensdb_mus <- ah[["AH89211"]]
+ensdb_mus
+```
+```{r}
+q3 <- query(ah, c("Mus Musculus", "dna_sm", "2bit", "GRCm38"))
+q3
+dnasm_mus <- ah[["AH88477"]]
+
+dnasm_mus
+```
+
+
+```{r}
+# extract transcripts and genes:
+txs <- transcripts(ensdb_mus)
+txs
+gns<-genes(ensdb_mus)
+gns
+
+
+seqlevels(txs)
+
+```
+# 2. Reading the ensembl object
+## How many different ensembl gene IDs and gene symbols are there for protein-coding genes?
+
+
+```{r, include=FALSE}
+#head(txs$tx_biotype)
+#head(txs[,"tx_biotype"])
+#table(seqnames(txs))
+#shows you the available filters
+#supportedFilters()
+```
+
+
+```{r}
+table(txs$tx_biotype)
+
+
+#filter with the attribute "protein_coding"
+txs_pc <- transcripts(ensdb_mus, filter=TxBiotypeFilter("protein_coding"))
+
+print(paste0("Number of protein coding genes: ",length(txs_pc)))
+
+```
+## Plot the distribution of the (spliced) length of protein-coding transcripts
+First, we extract exons of protein-coding transcripts from the database. Then, we split them by transcript, before summing the width of the exons of each transcript.
+
+```{r}
+# supportedFilters(), tx_biotype
+
+exs <- exons(ensdb_mus, column=c("tx_id"))
+exs
+
+# same as "exons()" but returning the exons split by transcripts
+exsPerTx <- exonsBy(ensdb_mus, column=c("tx_id","tx_biotype"))
+# we limit ourselves to protein-coding transcripts:
+
+exsPerTx <- exonsBy(ensdb_mus, column=c("tx_id","tx_biotype"), filter=TxBiotypeFilter("protein_coding"))
+
+exsPerTx
+
+# what are the transcripts that have more than on exon / sub-element:
+head(which(lengths(exsPerTx)>1))
+
+exsPerTx[["FBtr0005088"]]
+```
+
+How many transcripts do protein-coding genes have?
+
+```{r}
+nbExonsPerPCtx <- lengths(exsPerTx)
+hist(nbExonsPerPCtx)
+```
+
+Selecting transcripts from one chromosome:
+
+```{r}
+txs_2L <- txs[seqnames(txs)=="2L"] 
+```
+
+Example of overlapping GRanges objects:
+
+```{r}
+# we create a new GRanges
+gr <- GRanges(c("2L","2L"), IRanges(start=c(14615552, 14616303), end=c(14615552+10, 14616303+20)))
+gr
+# how many transcripts of 2L overlap with my `gr` object?
+table(overlapsAny(txs_2L, gr, minoverlap=1, type="any"))
+# sum(countOverlaps(txs_2L, gr, minoverlap=1, type="any")) => slightly different result because some transcripts overlap more than once: txs_2L[countOverlaps(txs_2L, gr, minoverlap=1, type="any")==2]
+nearest(gr, txs_2L)
+txs_2L[4800]
+txs_2L[4803]
+```
