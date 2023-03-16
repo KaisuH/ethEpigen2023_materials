@@ -1,0 +1,95 @@
+---
+title: "Example ChIP-seq analysis"
+author: "Kaisu Hiltunen"
+date: "3/10/2022"
+output: html_document
+---
+
+```{r}
+suppressPackageStartupMessages({
+  library(AnnotationHub)
+  library(Rsubread)
+  library(rtracklayer)
+  library(Biostrings)
+  library(Rfastp)
+  library(epiwraps)
+})
+ah <- AnnotationHub()
+```
+
+We will perform the primary analysis of an example dataset, at each step demonstrating the use of both a very standard pipeline, and a full R-based equivalent. Pay attention to which chunks are R or bash code (see header)
+
+# Downloading the raw reads
+
+I downloaded the dataset for Drosophila ChIP-seq for the protein CTCF:
+https://www.encodeproject.org/files/ENCFF127RRR/@@download/ENCFF127RRR.fastq.gz
+
+
+## Using Rfastp
+
+```{r}
+dir.create("week03/assignment_rfastp.trimmed")
+qc <- lapply(c(Ctcf="week03/assignment_raw/Ctcf.fastq.gz", input="week03/raw/input.fastq.gz"), FUN=function(x){
+  Rfastp::rfastp(x, thread=4, overrepresentationAnalysis=TRUE,
+                 outputFastq=file.path("week03/assignment_rfastp.trimmed/",gsub("\\.fastq\\.gz$","",basename(x))))
+})
+```
+
+This will create an html report with before/after QC plots, as well as a trimmed
+and filtered fastq file. Furthermore, the R output object (equivalent to the .json 
+stats also saved by the program) can be used to generate the QC plots inside a
+markdown, for example:
+
+```{r}
+Rfastp::curvePlot(qc$Ctcf, curve="content_curves")
+```
+
+
+# Alignment
+
+## Using Rsubread
+
+### Building a genome index for mapping
+
+
+```{r, eval=FALSE}
+# we get the genome sequence from AnnotationHub
+genome <- ah[["AH49674"]]
+# we create a new directory that will contain the genome index
+dir.create("week03/BDGP6_genome")
+# we write the genome sequence in fasta format
+export(import.2bit(genome), "week03/BDGP6_genome/genome.fasta.gz", compress=TRUE)
+# we build a Rsubread index
+Rsubread::buildindex("week03/BDGP6_genome/rsubread", reference="week03/BDGP6_genome/genome.fasta.gz")
+```
+
+### Alignment
+
+```{r}
+dir.create("week03/aligned")
+align.stats <- Rsubread::align(index="week03/BDGP6_genome/rsubread", type="dna",
+                               readfile1=c("week03/assignment_rfastp.trimmed/Ctcf_R1.fastq.gz", 
+                                           "week03/assignment_rfastp.trimmed/input_R1.fastq.gz"),
+                               output_file=c("week03/aligned/Ctcf.bam","week03/aligned/input.bam"),
+                               nthreads=6, sortReadsByCoordinates=TRUE)
+align.stats
+```
+
+
+# Peak calling: Using R
+
+This alternative is currently still very beta when it comes to using the input control, so here we will do without it. For the purpose of this course, this is offered as an alternative for windows users who can't install MACS2/3:
+
+```{r}
+dir.create("week03/peaks")
+peaks <- callPeaks("week03/aligned/Ctcf.bam", fragLength=50L)
+# if we want to save it as a bed file:
+rtracklayer::export.bed(peaks, "week03/peaks/peaks.bed")
+```
+
+```{r}
+head(peaks)
+region <- as.character(granges(peaks[1]))
+plotSignalTracks(c(Ctcf="week03/aligned/Ctcf.bam", Input="week03/aligned/input.bam"), region=region)
+```
+

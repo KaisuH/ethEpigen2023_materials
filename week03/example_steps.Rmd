@@ -65,10 +65,10 @@ trimmomatic SE -threads 4 -summary trimmed/input.stats -phred33 raw/input.fastq.
 ## Using Rfastp
 
 ```{r}
-dir.create("rfastp.trimmed")
-qc <- lapply(c(Myc="raw/Myc.fastq.gz", input="raw/input.fastq.gz"), FUN=function(x){
+dir.create("week03/rfastp.trimmed")
+qc <- lapply(c(Myc="week03/raw/Myc.fastq.gz", input="raw/input.fastq.gz"), FUN=function(x){
   Rfastp::rfastp(x, thread=4, overrepresentationAnalysis=TRUE,
-                 outputFastq=file.path("rfastp.trimmed/",gsub("\\.fastq\\.gz$","",basename(x))))
+                 outputFastq=file.path("week03/rfastp.trimmed/",gsub("\\.fastq\\.gz$","",basename(x))))
 })
 ```
 
