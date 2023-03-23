@@ -1,0 +1,151 @@
+
+---
+title: "Exploration of processed ChIP-seq data"
+author: "Kaisu Hiltunen"
+output: html_document
+---
+
+```{r}
+suppressPackageStartupMessages({
+  library(AnnotationHub)
+  library(rtracklayer)
+  library(epiwraps)
+  library(GenomicRanges)
+  library(R.utils)
+})
+ah <- AnnotationHub()
+```
+
+# Assignment week4
+
+Find and download from ENCODE the peaks (i.e. bed-like format) for the following in mouse embryonic stem cells (mESC) :
+
+-   Transcription factor p300
+
+    histone modifications
+
+-   H3K4me3,
+
+-   H3K4me1,
+
+-   H3K27ac, and
+
+-   H3K27me3
+
+# Downloading the processed data
+
+```{r, eval=FALSE}
+dir.create("Assignment_data")
+
+#Downloading the H3K27me3 data:
+download.file("https://www.encodeproject.org/files/ENCFF008XKX/@@download/ENCFF008XKX.bed.gz","Assignment_data/H3K27me3.bed.gz")
+#gunzip("Assignment_data/H3K27me3.bed.gz")
+
+#Downloading the H3K27ac data:
+download.file("https://www.encodeproject.org/files/ENCFF360VIS/@@download/ENCFF360VIS.bed.gz",
+ "Assignment_data/H3K27ac.bed.gz")
+#gunzip("Assignment_data/H3K27ac.bed.gz")
+
+#Downloading the H3K4me1 data: 
+download.file("https://www.encodeproject.org/files/ENCFF333IJH/@@download/ENCFF333IJH.bed.gz",
+ "Assignment_data/H3K4me1.bed.gz")
+#gunzip("Assignment_data/H3K4me1.bed.gz")
+
+#Downloading the H3K4me3 data:
+download.file("https://www.encodeproject.org/files/ENCFF247GVM/@@download/ENCFF247GVM.bed.gz",
+ "Assignment_data/H3K4me3.bed.gz")
+#gunzip("Assignment_data/H3K4me3.bed.gz")
+
+#p300
+download.file("https://www.encodeproject.org/files/ENCFF653YVR/@@download/ENCFF653YVR.bed.gz", "Assignment_data/p300.bed.gz")
+```
+
+# specifying the format
+
+Importing and setting the format to narrowpeak
+
+```{r}
+#p300
+peaks_p300 <- rtracklayer::import("Assignment_data/p300.bed.gz", format="narrowPeak")
+
+#H3K4me1
+peaks_H3K4me1 <- rtracklayer::import("Assignment_data/H3K4me1.bed.gz", format="narrowPeak")
+
+#H3K4me3
+peaks_H3K4me3 <- rtracklayer::import("Assignment_data/H3K4me3.bed.gz", format="narrowPeak")
+
+#H3K27ac
+peaks_H3K27ac <- rtracklayer::import("Assignment_data/H3K27ac.bed.gz", format="narrowPeak")
+
+#H3K27me3
+peaks_H3K27me3 <- rtracklayer::import("Assignment_data/H3K27me3.bed.gz", format="narrowPeak")
+
+
+head(peaks_H3K27me3)
+```
+
+```{r, eval=FALSE,include=FALSE}
+#This is possibly redundant for this task. Might delete later.
+q <- query(ah, c("mm10","ensembl"))
+ensembl_mm10<-ah[["AH98194"]]
+ensembl_mm10
+mm10<-ah[["AH6066"]]
+mm10
+```
+
+Extract the subset of peaks which overlap with p300.
+
+```{r, include=FALSE, eval=FALSE}
+#p300 overlap H3K4me1
+peaks_p300$overlapsH3K4me1<-overlapsAny(peaks_p300,peaks_H3K4me1)
+
+#p300 overlap H3K4me3
+peaks_p300$overlapsH3K4me3<-overlapsAny(peaks_p300,peaks_H3K4me3)
+
+#p300 overlap H3K27ac
+peaks_p300$overlapsH3K27ac<-overlapsAny(peaks_p300,peaks_H3K27ac)
+
+#p300 overlap H3K27me3
+peaks_p300$overlapsH3K27me3<-overlapsAny(peaks_p300,peaks_H3K27me3)
+
+```
+```{r}
+proportion=c()
+absolute_overlaps=c()
+histone=c()
+histone=c('H3K4me1','H3K4me3','H3K27ac','H3K27me3')
+
+#p300 overlap H3K4me1
+peaks_H3K4me1$overlapsp300<-overlapsAny(peaks_H3K4me1,peaks_p300)
+proportion<-append(proportion, sum(peaks_H3K4me1$overlapsp300)/length(peaks_H3K4me1))
+absolute_overlaps<-append(absolute_overlaps, sum(peaks_H3K4me1$overlapsp300))
+
+
+#p300 overlap H3K4me3
+peaks_H3K4me3$overlapsp300<-overlapsAny(peaks_H3K4me3,peaks_p300)
+proportion<-append(proportion, sum(peaks_H3K4me3$overlapsp300)/length(peaks_H3K4me3))
+absolute_overlaps<-append(absolute_overlaps, sum(peaks_H3K4me3$overlapsp300))
+
+#p300 overlap H3K27ac
+peaks_H3K27ac$overlapsp300<-overlapsAny(peaks_H3K27ac,peaks_p300)
+proportion<-append(proportion, sum(peaks_H3K27ac$overlapsp300)/length(peaks_H3K27ac))
+absolute_overlaps<-append(absolute_overlaps, sum(peaks_H3K27ac$overlapsp300))
+
+
+#p300 overlap H3K27me3
+peaks_H3K27me3$overlapsp300<-overlapsAny(peaks_H3K27me3,peaks_p300)
+proportion<-append(proportion, sum(peaks_H3K27me3$overlapsp300)/length(peaks_H3K27me3))
+absolute_overlaps<-append(absolute_overlaps, sum(peaks_H3K27me3$overlapsp300))
+
+
+```
+
+```{r}
+df <- data.frame(histone, absolute_overlaps, proportion)
+
+df
+```
+
+```{r}
+print(paste0("Total amount of marks overlapped by p300: ", sum(df$absolute_overlaps)))
+```
