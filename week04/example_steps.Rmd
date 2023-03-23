@@ -1,6 +1,6 @@
 ---
 title: "Exploration of processed ChIP-seq data"
-author: "Pierre-Luc"
+author: "Kaisu Hiltunen"
 output: html_document
 ---
 
@@ -23,8 +23,8 @@ To improve speed and so on, we'll work with a subset of the data on the chromoso
 You can download this data like this:
 
 ```{r}
-download.file("https://ethz-ins.org/content/Myc_dm_subset.zip", "Myc_dm_subset.zip")
-unzip("Myc_dm_subset.zip")
+download.file("https://ethz-ins.org/content/Myc_dm_subset.zip", "week04/Myc_dm_subset.zip")
+unzip("week04/Myc_dm_subset.zip")
 ```
 
 
@@ -33,8 +33,8 @@ unzip("Myc_dm_subset.zip")
 We can visualize the coverage around (+/- 2000bp) the first peak in the list like this:
 
 ```{r}
-peaks <- rtracklayer::import("peaks/Myc_peaks.narrowPeak")
-plotSignalTracks(list(signal="aligned/Myc.bam", input="aligned/input.bam", peaks=peaks),
+peaks <- rtracklayer::import("week04/Myc_dm_subset/peaks/Myc_peaks.narrowPeak")
+plotSignalTracks(list(signal="week04/Myc_dm_subset/aligned/Myc.bam", input="week04/Myc_dm_subset/aligned/input.bam", peaks=peaks),
                  region=peaks[1], extend=2000)
 ```
 
@@ -44,7 +44,7 @@ We could also include, in the plot, any gene in the area by including an EnsDb o
 
 ```{r}
 ensdb <- ah[["AH95713"]] # Drosophila EnsDb
-plotSignalTracks(list(signal="aligned/Myc.bam", input="aligned/input.bam", peaks=peaks),
+plotSignalTracks(list(signal="week04/Myc_dm_subset/aligned/Myc.bam", input="week04/Myc_dm_subset/aligned/input.bam", peaks=peaks),
                  region=peaks[1], ensdb=ensdb, extend=2000)
 ```
 
@@ -52,7 +52,7 @@ Instead of specifying a region, when providing an EnsDb object we can also query
 
 ```{r}
 ensdb <- ah[["AH95713"]] # Drosophila EnsDb
-plotSignalTracks(list(signal="aligned/Myc.bam", input="aligned/input.bam", peaks=peaks),
+plotSignalTracks(list(signal="week04/Myc_dm_subset/aligned/Myc.bam", input="week04/Myc_dm_subset/aligned/input.bam", peaks=peaks),
                  region="numb", ensdb=ensdb, transcripts="full")
 ```
 
@@ -78,30 +78,30 @@ done
 In this example I'll showcase the binning by generating two tracks (i.e. bigwigs) for the IP:
 
 ```{r}
-dir.create("tracks")
-epiwraps::bam2bw("aligned/Myc.bam", "tracks/Myc_full.bw", binWidth=1, extend=100, scaling=TRUE)
-epiwraps::bam2bw("aligned/Myc.bam", "tracks/Myc.bw", binWidth=20, extend=100, scaling=TRUE)
-epiwraps::bam2bw("aligned/input.bam", "tracks/input.bw", binWidth=20, extend=100, scaling=TRUE)
+dir.create("week04/tracks")
+epiwraps::bam2bw("week04/Myc_dm_subset/aligned/Myc.bam", "week04/tracks/Myc_full.bw", binWidth=1, extend=100, scaling=TRUE)
+epiwraps::bam2bw("week04/Myc_dm_subset/aligned/Myc.bam", "week04/tracks/Myc.bw", binWidth=20, extend=100, scaling=TRUE)
+epiwraps::bam2bw("week04/Myc_dm_subset/aligned/input.bam", "week04/tracks/input.bw", binWidth=20, extend=100, scaling=TRUE)
 ```
 
 # Looking at an example peak
 
 ```{r}
-plotSignalTracks(list(full="tracks/Myc_full.bw", binned="tracks/Myc.bw", peaks=peaks), 
+plotSignalTracks(list(full="week04/tracks/Myc_full.bw", binned="week04/tracks/Myc.bw", peaks=peaks), 
                  region="numb", ensdb=ensdb)
 ```
 
 If we zoom in around that peak, we see the difference between the two tracks:
 
 ```{r}
-plotSignalTracks(list(full="tracks/Myc_full.bw", binned="tracks/Myc.bw", peaks=peaks), 
+plotSignalTracks(list(full="week04/tracks/Myc_full.bw", binned="week04/tracks/Myc.bw", peaks=peaks), 
                  region="2L:9436969-9437970", ensdb=ensdb)
 ```
 
 Now comparing to the input:
 
 ```{r}
-tracks <- list(Myc="tracks/Myc.bw", binned="tracks/input.bw", peaks=peaks)
+tracks <- list(Myc="week04/tracks/Myc.bw", binned="week04/tracks/input.bw", peaks=peaks)
 plotSignalTracks(tracks, region="numb", ensdb=ensdb)
 # if we want all tracks on the same scale:
 plotSignalTracks(tracks, region="numb", ensdb=ensdb, tracks.params=list(ylim=c(0,40)))
@@ -110,7 +110,7 @@ plotSignalTracks(tracks, region="numb", ensdb=ensdb, tracks.params=list(ylim=c(0
 # Looking at multiple peaks
 
 ```{r}
-peakSignals <- signal2Matrix(c(Myc="tracks/Myc.bw", input="tracks/input.bw"),
+peakSignals <- signal2Matrix(c(Myc="week04/tracks/Myc.bw", input="week04/tracks/input.bw"),
                              regions=peaks, extend=2000, w=20)
 plotEnrichedHeatmaps(peakSignals)
 ```
@@ -118,8 +118,8 @@ plotEnrichedHeatmaps(peakSignals)
 ## Computing signal relative to the input
 
 ```{r}
-epiwraps::bam2bw("aligned/Myc.bam", bgbam="aligned/input.bam", 
-                 output_bw="tracks/Myc_relative.bw", binWidth=20, extend=100, scaling=TRUE)
+epiwraps::bam2bw("week04/Myc_dm_subset/aligned/Myc.bam", bgbam="week04/Myc_dm_subset/aligned/input.bam", 
+                 output_bw="week04/tracks/Myc_relative.bw", binWidth=20, extend=100, scaling=TRUE)
 ```
 
 To visualize this, we'll compare the original signal with the relative one:
@@ -135,6 +135,28 @@ plotEnrichedHeatmaps(peakSignals[c(1,3)], scale_title="raw") +
 # Manipulating peaks
 
 # How many peaks overlap promoters
+```{r}
+txs<-transcripts(ensdb)
+proms<-promoters(txs,upstream=1000,downstream=500)
+head(proms)
+peaksOverlapsPromoters<-overlapsAny(peaks,proms)
+head(peaksOverlapsPromoters)
+table(peaksOverlapsPromoters)
+```
 
+```{r}
+sum(peaksOverlapsPromoters)
+promotersOverlapPeaks<-overlapsAny(proms,peaks)
+sum(promotersOverlapPeaks)
+```
 # Basic peak annotation
+```{r}
+annotatedPeaks<-epiwraps::annotateRegions(peaks,ensdb)
+head(annotatedPeaks)
+```
 
+If we want to extract the subset of peaks 
+```{r}
+peaks$overlapsPromoter<-overlapsAny(peaks,proms)
+peaksInPromoters<-
+```
