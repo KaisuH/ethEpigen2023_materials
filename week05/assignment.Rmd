@@ -1,0 +1,107 @@
+
+---
+title: "Exploration of bivalent domains"
+author: "Kaisu Hiltunen"
+output: html_document
+---
+
+```{r}
+suppressPackageStartupMessages({
+  library(AnnotationHub)
+  library(ensembldb)
+  library(GenomicRanges)
+  library(epiwraps)
+  library(rtracklayer)
+  library(ggplot2)
+  library(R.utils)
+})
+```
+
+# Assignment week5
+
+Using the peaks downloaded last week, we identify bivalent domains (H3K27me3 + H3K4me3) in mouse embryonic stem cells (mESC).
+
+
+Histone modifications
+
+-   H3K4me3, and
+
+-   H3K27me3
+
+
+Cell lines
+    
+-   mESC
+
+-   forebrain cells from 15.5 days old mus musculus 
+
+
+In this assignment we look at what happens to these regions in differentiated cell lines. I chose the forebrain cells from 15.5 days old Mus musculus embryon (B6NCrl). Following code snippet downloads the files for peaks in this cell type:
+```{r,eval=FALSE}
+#H3K27me3 ChIP-seq on embryonic 15.5 day mouse forebrain
+download.file("https://www.encodeproject.org/files/ENCFF307UVN/@@download/ENCFF307UVN.bed.gz",
+ "peaks/brain_H3K27me3.bed.gz")
+gunzip("peaks/brain_H3K27me3.bed.gz")
+
+#H3K27ac ChIP-seq on embryonic 15.5 day mouse forebrain
+#download.file("https://www.encodeproject.org/files/ENCFF433OHF/@@download/ENCFF433OHF.bed.gz","peaks/brain_H3K27ac.bed.gz")
+#gunzip("peaks/brain_H3K27ac.bed.gz")
+
+#H3K4me3 Mus musculus strain B6NCrl forebrain tissue embryo (15.5 days)
+download.file("https://www.encodeproject.org/files/ENCFF112LTJ/@@download/ENCFF112LTJ.bed.gz",  "peaks/brain_H3K4me3.bed.gz")
+gunzip("peaks/brain_H3K4me3.bed.gz")
+
+#H3K4me1 ChIP-seq on embryonic 15.5 day mouse forebrain
+#download.file("https://www.encodeproject.org/files/ENCFF871XIM/@@download/ENCFF871XIM.bed.gz",  "peaks/brain_H3K4me1.bed.gz")
+#gunzip("peaks/brain_H3K4me1.bed.gz")
+```
+
+```{r}
+#how to iterate through the different files:
+#first list the files
+peakfiles <- list.files("peaks",full.names=TRUE)
+#then give them meaningful names
+names(peakfiles) <- gsub("\\.bed","",basename(peakfiles))
+# then loop through them and read them:
+peaks <- lapply(peakfiles, FUN=rtracklayer::import, format="narrowPeak")
+```
+We can summarise the peak overlaps with regionOverlaps(). E.g., from the table below we can see there are 3920 brain_H3K4me3  peaks overlapping brain_H3K27me3 regions.
+```{r}
+regionOverlaps(peaks)
+```
+
+```{r}
+#finding the bivalent domains with H3K27me3 + H3K4me3 in mESC
+lapply(peaks, FUN=function(x) sum(overlapsAny(peaks$H3K4me3,x)))
+#Using subsetByOverlaps(subject, query) to subset the overlapping peaks
+peaks$mESC_bivalent_doms<-subsetByOverlaps(x=peaks$H3K4me3,ranges=peaks$H3K27me3)
+#Below gives us the number of ranges aka 174
+#length(peaks$mESC_bivalent_doms)
+```
+We can see above that 174 H3K27me3 regions are overlapped by H3K4me3 in mESC.
+
+```{r}
+lapply(peaks, FUN=function(x) sum(overlapsAny(peaks$brain_H3K4me3,x)))
+```
+And as seen above, in the forebrain, the same number is 3920 (H3K27me3 regions overlapped by H3K4me3).
+
+```{r}
+#saving the 3920 bivalent regions in the brain 
+peaks$brain_bivalent_doms<-subsetByOverlaps(x=peaks$brain_H3K4me3,ranges=peaks$brain_H3K27me3)
+```
+From these 3920 regions, 79 are from the original bivalent domains that we saw in the mESC.
+```{r}
+#saving the bivalent domains shared by the two different cell lines
+peaks$shared_bivalent_doms<-subsetByOverlaps(peaks$brain_bivalent_doms,peaks$mESC_bivalent_doms)
+#printing the number for checking the result
+length(peaks$shared_bivalent_doms)
+```
+Similar number (85) can also be seen in the upset plot. This is a bit larger result, possibly due to differing counting method from subsetByOverlaps.
+```{r}
+regionUpset(peaks, reference = peaks$brain_bivalent_doms)
+```
+```{r}
+regionUpset(peaks, reference = peaks$H3K4me3)
+```
+
+
