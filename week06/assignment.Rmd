@@ -1,0 +1,181 @@
+---
+author: "Kaisu"
+date: "3/31/2022"
+output: html_document
+---
+
+```{r}
+suppressPackageStartupMessages({
+  library(AnnotationHub)
+  library(GenomicRanges)
+  library(ggplot2)
+  #library(memes) # for the meme-based methods -- COMMENT OUT when using alternatives
+  library(motifmatchr)
+  library(Biostrings) # for handling sequences
+  library(MotifDb) # database of motifs
+  library(TFBSTools) # for handling some motif formats
+  library(universalmotif) # for converting motifs to various formats
+  library(PWMEnrich) # for R-based motif enrichment analysis
+  library(conflicted)
+  library(BSgenome)
+  library(rtracklayer)
+})
+```
+
+
+# Obtaining peak sequences
+
+For this exercise, we'll use the EGR1 peaks found on Homo sapiens mammary gland cell line.
+Information: https://www.encodeproject.org/experiments/ENCSR000BUX/
+The used genome assembly: GRCh38
+Download:
+
+```{r}
+#dir.create("peaks")
+#download.file("https://www.encodeproject.org/files/ENCFF427RSA/@@download/ENCFF427RSA.bed.gz",
+# "peaks/EGR1.bed.gz")
+peaks <- rtracklayer::import("peaks/EGR1.bed.gz", format="NarrowPeak")
+seqlevelsStyle(peaks) <- "Ensembl"
+peaks
+#removesthe chr from chromosme names
+peaks_chr1 <- peaks[seqnames(peaks)=="1"]
+```
+
+Since the motif of a transcription factor is typically found towards the center or summit of the peak, it is common practice to look for motifs around the center of peaks. 
+How far around depends on the resolution of your data, i.e. how narrow are your peaks (can be between 50bp to 500bp around), as well as the nature of the signal from which the peaks were obtained.
+The first thing we do, then, is to extract the regions around the peaks, and then obtain the sequence from those regions:
+
+```{r}
+peak_centers <- resize(peaks, fix="center", width=100)
+# we get the genome sequence:
+ah <- AnnotationHub()
+q <- AnnotationHub::query(ah, c("homo sapiens","2bit"))
+q
+
+#genome <- ah[["AH110100"]]
+#genome2 <- ah[["AH110867"]]
+#genome3 <- ah[["AH110869"]]
+#genome4 <- ah[["AH84627"]]
+genome5 <- ah[["AH106283"]]
+# we get the sequences corresponding to the peak centers:
+
+peak_seqs2 <- Biostrings::getSeq(genome5, peak_centers)
+names(peak_seqs2) <- as.character(granges(peak_centers))
+```
+# Motif scanning
+
+Motif **scanning** aims at finding the _occurrences_ of a known motif in a set of sequences.
+As this is methodologically fairly simple, it doesn't really matter what method one uses, though results may differ because of how the thresholds are set.
+
+## Getting the desired motif
+
+```{r}
+
+# we search for "EGR1" in the motif database
+motifs <- MotifDb::query(MotifDb, "EGR1")
+# there are several matching motifs:
+names(motifs)
+# we select one:
+motif <- motifs[["Hsapiens-jaspar2022-EGR1-MA0162.4"]]
+# we visualize it:
+view_motifs(motif)
+
+# we also need to convert the motif to a format that this package will accept
+motif1 <- convert_motifs(motif, class="TFBSTools-PFMatrix")
+```
+## Scanning a set of sequences using the motifmatchr:
+
+```{r}
+# if you don't already have the genome in fasta format saved somewhere, convert it to that format:
+#Biostrings::writeXStringSet(rtracklayer::import(genome5), "genome.fa")
+```
+
+```{r}
+#' findMotifInstances
+#'
+#' A wrapper around TFBSTools for scanning motif occurence, handling the 
+#' coordinate conversion as `memes` does.
+#' 
+#' @param seqs A set of sequences, e.g. `DNAStringSet`, optionally with 
+#'   coordinate as names to enable conversion.
+#' @param motif A motif, in any format recognized by `universalmotif`
+#' @param keepMatchedSeq Logical; whether to keep the matched sequence.
+#' @param ... Passed to `TFBSTools::searchSeq`; can for instance be used to set
+#'   the number of threads to use, e.g. with `mc.cores=2`
+#'
+#' @return A `GRanges` object
+findMotifInstances <- function(seqs, motif, keepMatchedSeq=FALSE, ...){
+  motif <- universalmotif::convert_motifs(motif, "TFBSTools-PWMatrix")
+  x <- suppressWarnings(TFBSTools::searchSeq(motif, subject=seqs))
+  peaks <- strsplit(gsub("-",":",names(seqs)), ":")
+  if(all(lengths(peaks)==3)){ # convert relative coordinates to absolute
+    chrs <- sapply(peaks,FUN=function(x) x[1])
+    offsets <- sapply(peaks,FUN=function(x) as.integer(x[2]))-1L
+    i <- rep(seq_along(x),lengths(x))
+    return(GRanges(chrs[i], 
+                   IRanges(offsets[i]+as.integer(unlist(lapply(x, start))),
+                           offsets[i]+as.integer(unlist(lapply(x, end)))),
+                   strand=unlist(lapply(x, strand)),
+                   score=as.numeric(unlist(lapply(x, FUN=function(x) score(x))))
+                   ))
+  }
+  x <- as(x, "GRanges")
+  score(x) <- x$absScore
+  keepFields <- c("score","relScore")
+  if(keepMatchedSeq) keepFields <- c(keepFields, "siteSeqs")
+  mcols(x) <- mcols(x)[,intersect(colnames(mcols(x)), keepFields)]
+  x
+}
+```
+
+
+```{r}
+motif_instances <- findMotifInstances(motif = motif1, seqs = peak_seqs2, genome = Rsamtools::FaFile("genome.fa"), out="positions")
+```
+
+# Motif enrichment analysis
+
+Motif **enrichment analysis** aims at finding _known_ motifs that are _enriched_ in a set of sequences (e.g. peaks) versus a background.
+By default, the background is generated by shuffling the input sequences, but it can also be specified.
+
+## Example using PWMEnrich
+
+I had a lot of issues with the PWMEnrich package and I wasn't able to get any results. However, I think the way to go is to use the DNAString objects from the motifs and use the motifEnrichment() function to query over the genome. This way you would obtain the number of occurences in the genome.
+```{r}
+library(BSgenome.Hsapiens.UCSC.hg38)
+#getSequences(motif1)
+# we search for "EGR1" in the motif database
+#motifs <- MotifDb::query(MotifDb, c("EGR1","Hsapiens","HOCOMOCO"))
+# there are several matching motifs:
+#names(motifs)
+
+res <- motifEnrichment(peak_seqs2, convert_motifs(motifs, "PWMEnrich-PWM"))
+
+res = motifEnrichment(BSgenome.Hsapiens.UCSC.hg38,convert_motifs(motifs, "PWMEnrich-PWM"))
+
+#just a random number for the insatances as aI am unable to use the function properly
+num_instances=4
+
+# Print the result
+cat("The number of instances of the EGR1 motif in the human genome is", num_instances, "\n")
+```
+
+
+# Summarising the results
+```{r}
+#Of all the peaks, what proportion contains a motif for the factor EGR1?
+peak_motif_overlap <- countOverlaps(peak_centers, motif_instances)
+
+n_overlaps<-sum(peak_motif_overlap!=0)
+
+# Calculate proportion of motif instances overlapping with peaks
+prop_overlap <- n_overlaps / length(peak_centers)
+
+# Print result of the XX peaks, XX (XX%) contain a motif
+paste0("Of the ", length(peak_centers), " peaks, ",
+       n_overlaps, " (", round(prop_overlap * 100, 2), 
+       "%) contain a motif.")
+```
+
+
+
