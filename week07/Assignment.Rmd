@@ -1,0 +1,220 @@
+---
+title: "ATAC-seq exploration practical"
+author: "Pierre-Luc"
+date: "2023/04/21"
+output: html_document
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+```{r, message=FALSE, warning=FALSE}
+suppressPackageStartupMessages({
+  library(epiwraps)
+  library(AnnotationHub)
+  library(MotifDb)
+  #library(memes)
+  library(universalmotif)
+  library(ensembldb)
+  library(ggplot2)
+})
+
+ah <- AnnotationHub(localHub=TRUE)
+ensdb <- ah[["AH89211"]] # mouse ensembldb object
+```
+
+## Download the data
+
+```{r, eval=FALSE}
+options(timeout=100000)
+download.file("https://ethz-ins.org/content/w7/atac.chr19.bam", "atac.chr19.bam", mode = "wb")
+download.file("https://ethz-ins.org/content/w7/atac.chr19.bam.bai", "atac.chr19.bam.bai", mode="wb")
+
+```
+
+```{r, eval=FALSE}
+# if you're on a slow computer, you might also want to download the tracks that we're generating below:
+download.file("https://ethz-ins.org/content/w7/w7_bw.zip", "w7_bw.zip")
+unzip("w7_bw.zip")
+```
+
+## Preparing tracks
+
+### BAMs and tracks
+
+Notes: A BAM file contains - aligned sequencing reads and associated
+information, such as the mapping quality and read orientation, which can
+be used to generate a coverage track.
+
+A coverage track - displays the number of reads that align to each
+position on the reference genome, providing a visualization of the
+sequencing depth and coverage across the genome. - useful for
+identifying regions of high and low coverage - additionally allows to
+visualize other features, e.g. - nucleosome-free regions
+
+### Nucleosome free and nucleosome containing regions
+
+Nucelosome-free regions can provide additonal information about the
+structure and organisation
+
+-   nucleosomes are the basic units in DNA packaging in eukaryotic cells
+-   NF regions are common near transcription start sites (TSSs)
+-   useful in understanding gene regulation, chromatin structure etc.
+
+Nucleosome-free regions (NFRs) are typically associated with low
+coverage or gaps in the coverage track since these regions are sensitive
+to DNase I digestion and therefore may not contain any aligned reads.
+
+Nucleosome-containing regions can be identified by higher coverage in
+the coverage track as they contain nucleosomes that protect the DNA from
+digestion.
+
+### Creating track files
+
+To retrieve nucleosome-free and nucleosome-containing elements from the
+ATAC-seq data, we can use the coverage tracks generated from the BAM
+file.
+
+We can use the bigWig file format to store the coverage tracks, and the
+rtracklayer package in R to read and manipulate them.
+
+```{r, message=FALSE, warning=FALSE}
+bam <- "atac.chr19.bam"
+
+# create a track using all fragments, computing the coverage at each position (and force Ensembl naming)
+bam2bw(bam, output_bw = "full_cov.bw", paired=TRUE, binWidth=10L, forceSeqlevelsStyle = "Ensembl")
+
+# create a track using all fragments, but computing the number of cuts/insertion sites at each position
+epiwraps::bam2bw(bam, output_bw = "full_cuts.bw", paired=TRUE, binWidth=1L, type="ends", 
+                 shift=c(4L,-5L), forceSeqlevelsStyle = "Ensembl")
+
+# create a track using only nucleosome-free fragments, computing coverage
+bam2bw(bam, output_bw = "NF_cov.bw", paired=TRUE, binWidth=5L, minFragLength=30, 
+       maxFragLength=120, forceSeqlevelsStyle = "Ensembl")
+
+# create a track using only nucleosome-free fragments, the number of cuts/insertion sites at each position
+bam2bw(bam, output_bw = "NF_cuts.bw", paired=TRUE, binWidth=1L, type="ends", minFragLength=30, 
+       maxFragLength=120, shift=c(4L,-5L), forceSeqlevelsStyle = "Ensembl")
+
+# create a track using only mono-nucleosome fragments, computing coverage
+bam2bw(bam, output_bw = "mono_cov.bw", paired=TRUE, binWidth=10L, minFragLength=140,
+       maxFragLength=220, forceSeqlevelsStyle = "Ensembl")
+
+# create a track using only mono-nucleosome fragments, the number of cuts/insertion sites at each position
+bam2bw(bam, output_bw = "mono_cuts.bw", paired=TRUE, binWidth=1L, type="ends", minFragLength=140,
+       maxFragLength=220, forceSeqlevelsStyle = "Ensembl")
+
+# create a track using only mono-nucleosome fragments, computing centers
+bam2bw(bam, output_bw = "mono_centers.bw", paired=TRUE, binWidth=5L, minFragLength=140,
+       maxFragLength=220, type="center", forceSeqlevelsStyle = "Ensembl")
+```
+
+## Obtaining the sites with a KLF4 motif
+
+```{r, message=FALSE, warning=FALSE}
+# get KLF4 motif
+motif <- MotifDb::query(MotifDb, c("KLF4","Mus"))[[1]]
+motif2 <- convert_motifs(motif, class="TFBSTools-PFMatrix")
+
+#get genome
+genome <- ah[["AH68356"]]
+# get the sequence for chr19:
+chr19 <- import(genome)["19"]
+
+# find motif occurences
+# here we could use any of the 3 methods we've seen: memes::runFimo, findMotifInstances, or this:
+moi_KLF4 <- motifmatchr::matchMotifs(motif2, chr19, out="positions", p.cutoff=1e-5)[[1]]
+
+# convert to GRanges (when using motifmatchr)
+moi_KLF4 <- as(setNames(moi_KLF4,names(chr19)), "GRanges")
+```
+
+## Plotting signals around the transcription factor occurences
+
+Next we plot the insertion (i.e. 'cuts') profile of
+
+-   nucleosome-free "NF_cuts.bw" a track created using only
+    nucleosome-free fragments (the fragments of size 30-120 bp)
+
+-   nucleosome-containing fragments "mono_cuts.bw" (the fragments of
+    size 140-220 bp)
+
+I have also included the coverage tracks because the "\_cuts" didn't
+look that interesting.
+
+### KLF4
+
+```{r, message=FALSE, warning=FALSE}
+# we prepare the list of tracks
+tracks<- c("NF cuts"="NF_cuts.bw", "Mono cuts"="mono_cuts.bw")
+
+# extract signals around the motif occurences
+# we zoom in to 500bp around the motif centers, in windows of 5bp
+sm_KLF4 <- signal2Matrix(tracks, moi_KLF4, w=5, extend=500)
+
+# plot the signals:
+# Renormalizing the results using a background normalization
+# this we can do for instance using:
+nf_KLF4 <- bwNormFactors(tracks, wsize=5L, useSeqLevels="19", nwind=5000L)
+# then we apply the normalization factors:
+smb_KLF4 <- rescaleSignalMatrices(sm_KLF4, nf_KLF4)
+
+plotEnrichedHeatmaps(smb_KLF4, trim=0.95)
+```
+
+### MAZ
+
+```{r, message=FALSE, warning=FALSE}
+# get MAZ motif
+motif_MAZ <- MotifDb::query(MotifDb, c("MAZ","Mus"))[[1]]
+motif_MAZ_con <- convert_motifs(motif_MAZ, class="TFBSTools-PFMatrix")
+
+# find motif occurences
+moi_MAZ <- motifmatchr::matchMotifs(motif_MAZ_con, chr19, out="positions", p.cutoff=1e-5)[[1]]
+
+# convert to GRanges (when using motifmatchr)
+moi_MAZ <- as(setNames(moi_MAZ,names(chr19)), "GRanges")
+
+# extract signals around the motif occurences
+# we zoom in to 500bp around the motif centers, in windows of 5bp
+sm_MAZ <- signal2Matrix(tracks, moi_MAZ, w=5, extend=500)
+
+# plot the signals:
+
+# using a background normalization
+nf_MAZ <- bwNormFactors(tracks, wsize=5L, useSeqLevels="19", nwind=5000L)
+# then we apply the normalization factors:
+smb_MAZ <- rescaleSignalMatrices(sm_MAZ, nf_MAZ)
+plotEnrichedHeatmaps(smb_MAZ, trim=0.95)
+```
+
+
+## Signal around TSS
+
+We could also look at the pattern around the TSS
+
+### KLF4
+
+```{r, message=FALSE, warning=FALSE}
+# fetch the protein-coding TSS from chromosome 19
+tracks <- c("NF cuts"="NF_cuts.bw", "Mono cuts"="mono_cuts.bw")
+txs <- transcripts(ensdb, filter=TxBiotypeFilter("protein_coding"))
+txs <- txs[seqnames(txs)=="19"]
+tss <- promoters(txs, upstream=0, downstream=1)
+
+tss.sm <- signal2Matrix(tracks, moi_KLF4, w=5, extend=3000)
+tss.smb <- rescaleSignalMatrices(tss.sm, nf_KLF4)
+plotEnrichedHeatmaps(tss.smb, trim=0.95, colors=c("white","darkred"))
+```
+
+### MAZ
+
+```{r, eval=TRUE, message=FALSE, warning=FALSE}
+tss2 <- promoters(txs, upstream=0, downstream=1)
+tss2.sm <- signal2Matrix(tracks, moi_MAZ, w=5, extend=3000)
+tss2.smb <- rescaleSignalMatrices(tss2.sm, nf_MAZ)
+plotEnrichedHeatmaps(tss2.smb, trim=0.95, colors=c("white","darkred"))
+```
+
+
+
