@@ -1,0 +1,194 @@
+---
+title: "ATAC-seq exploration"
+author: "Kaisu Hiltunen"
+date: "2023/05/3"
+output: html_document
+---
+
+```{r,warning=FALSE}
+suppressPackageStartupMessages({
+  library(GenomicRanges) #for cleanung the motif list
+  library(Rsamtools)
+  library(epiwraps)
+  library(motifmatchr)
+  library(MotifDb)
+  library(universalmotif)
+  library(sechm)
+  library(BiocParallel)
+  library(ggplot2)
+  library(chromVAR) # for motif accessibility estimation
+  library(SummarizedExperiment) # data structure
+  library(limma) # for statistical analysis
+  library(AnnotationHub)
+})
+# to control multithreading, unix users can use:
+# register(MulticoreParam(4))
+# for windows users, rather one of the following:
+register(SerialParam())
+# register(SnowParam(2))
+```
+
+
+## Download the data
+```{r, eval=FALSE}
+options(timeout=6000)
+download.file("https://ethz-ins.org/content/mouse_mm38_hippocampus.peakCounts.SE.rds", "hippocampus_peakCounts.SE.rds", mode="wb")
+```
+
+
+```{r}
+se <- readRDS("hippocampus_peakCounts.SE.rds")
+```
+
+
+## Get the database of motifs
+
+```{r}
+#concentrate on one source and specify species
+#although species is semi trivial
+motifs <- MotifDb::query(MotifDb, c("HOCOMOCOv11-core", "Hsapiens"))
+```
+
+
+```{r}
+#get a set of motifs in this specific format and rename the motifs with genesymbol
+motifs <- do.call(TFBSTools::PWMatrixList, setNames(
+           universalmotif::convert_motifs(motifs, class="TFBSTools-PWMatrix"),
+           mcols(motifs)$geneSymbol))
+```
+
+```{r}
+# preparing the genome sequence file 
+#mouse ensembl GRCm38 genome
+
+options(timeout=6000)
+ah<-AnnotationHub()
+#q<-AnnotationHub::query(ah, c("mus","ensembl","GRCm38"))
+
+
+genome<-ah[["AH68356"]]
+genome_seq<-rtracklayer::import(genome)
+
+```
+
+# How to estimate the accessibility
+
+1. get the fragment counts for each peak in each sample
+  -> add GC bias
+2. get the occurence of each motif in each peak
+3. use 1 and 2 to obtain aggregated motif score per sample
+
+
+```{r}
+colData(se)
+
+#extract the annotation of rows
+names<-se@colData@rownames
+
+#save conditions in vector
+conditions<-lapply(strsplit(names[],split="_"), function(l) l[[1]])
+
+#create column for condition data
+colData(se)$conditions<-conditions
+
+#same for sex
+sex<-lapply(strsplit(names[],split="_"), function(l) l[[2]])
+colData(se)$sex<-sex
+```
+
+```{r}
+#add gc bias to the object
+se<- chromVAR::addGCBias(se, genome=genome_seq)
+#we see that we added the bias column
+rowRanges(se)
+```
+```{r}
+#try to find which peaks contain which motifs
+#we dont use "out=positions"
+moi <- motifmatchr::matchMotifs(motifs, subject=se, genome=genome_seq)
+```
+# 3
+
+```{r, warning=FALSE,message=FALSE}
+dev <- chromVAR::computeDeviations(se, annotations = moi, background_peaks=getBackgroundPeaks(se,niterations=1000))
+
+
+variability <- chromVAR::computeVariability(dev)
+chromVAR::plotVariability(variability)
+```
+```{r}
+assays(dev)$norm <- scale(assays(dev)$z)
+dev
+```
+# Differential analysis
+
+With limma
+For each  run t-test to find out if this motif is differentially expressed
+```{r}
+#apply the factor function to turn the list of conditions to integer presentation
+dev$conditions <- factor(unlist(dev$conditions))
+
+#reorder the levels of the factor variable dev$conditions such that "Control" becomes the reference level.
+dev$conditions <- relevel(dev$conditions, "Control")
+
+#We create a model matrix mm1 for the variable conditions using the function model.matrix(). 
+#The formula ~conditions specifies that the variable conditions is the predictor or independent variable in the linear model. 
+mm1 <- model.matrix(~conditions, colData(dev))
+
+#same for the sex
+dev$sex <- factor(unlist(dev$sex))
+dev$sex <- relevel(dev$sex, "female")
+mm2<- model.matrix(~sex, colData(dev))
+```
+
+## Comparing stressed and control animals
+
+The stressed animals are denoted ‘FSS’ – forced swim stress.
+
+```{r}
+fit <- eBayes(lmFit(assays(dev)$norm, mm1))
+res_condition <-topTable(fit, coef = "conditionsFSS", number=Inf)
+head(res_condition)
+```
+
+
+```{r}
+res_condition$TF<-row.names(res_condition)
+ggplot(res_condition, aes(logFC, -log10(adj.P.Val), label=TF)) + geom_text()
+```
+
+```{r}
+sechm(dev, features=head(row.names(res_condition)),assayName="norm", show_colnames = TRUE)
+```
+## comparing females and males
+
+The the top most significant motifs for male vs female comparison:
+```{r}
+fit2 <- eBayes(lmFit(assays(dev)$norm, mm2))
+res_sex <-topTable(fit2, coef = "sexmale", number=Inf, adjust.method="BH")
+head(res_sex)
+```
+
+Plot a heatmap of the normalized accessibility scores across the samples for those motifs:
+```{r}
+res_sex$TF<-row.names(res_sex)
+ggplot(res_sex, aes(logFC, -log10(adj.P.Val), label=TF)) + geom_text()
+```
+```{r}
+sechm(dev, features=head(row.names(res_sex)),assayName="norm", show_colnames=TRUE)
+```
+# The top most significant motifs
+
+For each analysis, we 
+- report , 
+- plot a heatmap of the normalized accessibility scores across the samples for those motifs
+
+# Interpreting the results.
+
+The heatmaps show the normalized accessibility scores of the top  significant  motifs across samples. Higher scores are linked to higher accessibility of the motifs in the samples. 
+
+The FSS vs control: 
+we can see that some motifs have higher accessibility in the FSS samples, while others have higher accessibility in the control samples. Therefore, one could conclude that some motifs are more active and others are repressed in response to stress.
+
+The male vs female:
+We can see that some motifs have higher accessibility in the female samples. This suggests that some motifs may be sex-specific, or that the accessibility of some motifs may be regulated by sex hormones.
