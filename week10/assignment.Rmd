@@ -1,0 +1,191 @@
+---
+title: "Assignment"
+author: "Kaisu Hiltunen"
+date: "2023-05-17"
+output: html_document
+---
+# Week 10 assignment
+
+```{r}
+suppressPackageStartupMessages({
+  library(GenomicRanges)
+  library(epiwraps)
+  library(ggplot2)
+  library(rGREAT)
+})
+```
+## Data
+
+We download and decompress the following archive:
+https://ethz-ins.org/content/w10.assignment.zip
+This contains the bigwig files and peaks (bed) files for three TFs of the CREB family (all restricted to chr1; aligned against the hg38 genome)
+
+## Download the data
+
+```{r, eval=FALSE}
+options(timeout = 6000)
+dir.create("C:/Users/kaisu/OneDrive - Aalto University/Kurssit/Bioinformatic_approaches/ethEpigen2023_materials/ethEpigen2023_materials/week10/assignment")
+download.file("https://ethz-ins.org/content/w10.assignment.zip", "w10.assignment.zip")
+unzip("w10.assignment.zip")
+
+list.files()
+```
+
+## Prepare the regions and the tracks
+To get a clearer picture, we focus on high-confidence peaks from each factor to define the universe of regions.
+The non-redundant regions are obtained using the reduce() function.
+```{r}
+tracks <- list.files(pattern="bw$")
+peaks <- list.files(pattern="bed$")
+# we first import the peaks
+peaks <- lapply(peaks, rtracklayer::import.bed)
+# we'll focus on the high-quality peaks
+peaks <- lapply(peaks, FUN=function(x) x[x$score>800])
+# we get the union of non-redundant regions
+regions <- reduce(unlist(GRangesList(peaks)))
+
+```
+
+## Plotting and clustering
+
+We use clustering and visualization to illustrate the relationship between the binding of the different proteins.The lines are sorted in vertical direction by intensity.
+
+
+```{r}
+#The signal for each TF is calculated
+ml <- signal2Matrix(tracks, regions, extend=2000)
+
+# we could do extra normalization if needed
+# nf <- getNormFactors(tracks, useSeqLevels="chr1")
+# ml <- rescaleSignalMatrices(ml, scaleFactors=nf)
+
+plotEnrichedHeatmaps(ml)
+```
+
+The above is not great for observing patterns.
+It could be easier to see patterns if we sort the lines in clusters of similar signal.
+Clustering is performed using k-means clustering with different numbers of clusters, and the proportion of variance explained is plotted. 
+The k-means algorithm aims to partition n observations into k clusters in which each observation belongs to the cluster with the nearest mean.In this case, each observation represents a genomic region and the signal (ChIP-seq signal) of each transcription factor is used to calculate the distance between the observations.
+
+After trying different numbers of clusters we can see that the elbow lies at cl=3.
+```{r}
+cls<-clusterSignalMatrices(ml,k=2:10)
+ggplot(cls$varExplained, aes(k, varExplained))+geom_line()
+```
+
+The clusters explain ~56 % of the variation
+```{r}
+#clustering with a function 
+#uses k-mean clustering
+cl<-clusterSignalMatrices(ml, k=3)
+regions$cluster<-cl
+```
+
+Each region is assigned to a cluster, and the clusters are plotted using a heatmap where similar clusters are grouped together. This helps to visualize the relationships between the transcription factors based on the clustering. 
+Important to use s cl based on the ml.
+```{r}
+mycolors<-c("1"="red", "2"="blue", "3"="darkgreen") #"4"="black")
+plotEnrichedHeatmaps(ml, row_split = cl, mean_color=mycolors)
+```
+
+## Enrichment analysis
+We use GO enrichment analysis to determine if there are any enriched biological functions associated with the regions in each cluster.
+
+```{r, message=FALSE, warning=FALSE}
+sp<- split(regions, cl)
+
+#sends both regions of interests as well as the background of regions to a remote
+#server.
+res_cluster3<-rGREAT::submitGreatJob(sp[["3"]], bg=regions, species="hg38")
+table_cluster3<-rGREAT::getEnrichmentTables(res_cluster3)
+
+res_cluster2<-rGREAT::submitGreatJob(sp[["2"]], bg=regions, species="hg38")
+table_cluster2<-rGREAT::getEnrichmentTables(res_cluster2)
+
+res_cluster1<-rGREAT::submitGreatJob(sp[["1"]], bg=regions, species="hg38")
+table_cluster1<-rGREAT::getEnrichmentTables(res_cluster1)
+
+bp_cl1<-table_cluster1$`GO Biological Process`
+bp_cl2<-table_cluster2$`GO Biological Process`
+bp_cl3<-table_cluster3$`GO Biological Process`
+
+d<-meltSignals(ml,splitBy = cl)
+ggplot(d, aes(position, mean, colour=sample))+geom_line()+facet_wrap(~split)
+```
+
+## Using the relative signal
+
+Below is an example of clustering using the relative signal instead. This does not work when regions contains places where nothing happens. We have filtered the redundant regions so this should not be an issue.
+
+```{r}
+cl_rela<-clusterSignalMatrices(ml, k=3, scaleRows=TRUE)
+d_rela<-meltSignals(ml,splitBy = cl_rela)
+ggplot(d_rela, aes(position, mean, colour=sample))+geom_line()+facet_wrap(~split)
+```
+
+```{r}
+plotEnrichedHeatmaps(ml, row_split = cl_rela, mean_color=mycolors)
+```
+
+```{r, message=FALSE, warning=FALSE}
+sp_rela<- split(regions, cl_rela)
+
+#sends both regions of interests as well as the background of regions to a remote
+#server.
+res_rela_3<-rGREAT::submitGreatJob(sp_rela[["3"]], bg=regions, species="hg38")
+table_cluster3_rela<-rGREAT::getEnrichmentTables(res_rela_3)
+bp_cl3_rela <- table_cluster3_rela$`GO Biological Process`
+
+res_rela_2<-rGREAT::submitGreatJob(sp_rela[["2"]], bg=regions, species="hg38")
+table_cluster2_rela<-rGREAT::getEnrichmentTables(res_rela_2)
+bp_cl2_rela <- table_cluster2_rela$`GO Biological Process`
+
+res_rela_1<-rGREAT::submitGreatJob(sp_rela[["1"]], bg=regions, species="hg38")
+table_cluster1_rela<-rGREAT::getEnrichmentTables(res_rela_1)
+bp_cl1_rela <- table_cluster1_rela$`GO Biological Process`
+```
+
+## Cluster 1
+These plots are included for comparison but are not discussed in this assignment as the results are less significant.
+```{r}
+
+par(mfrow=c(1,2)) 
+ggplot(head(bp_cl1,15), aes(Hyper_Fold_Enrichment, reorder(name, Hyper_Adjp_BH), color=-log10(Hyper_Adjp_BH))) + geom_point() + scale_color_viridis_c()+ggtitle("Cluster 1")
+
+ggplot(head(bp_cl1_rela,15), aes(Hyper_Fold_Enrichment, reorder(name, Hyper_Adjp_BH), color=-log10(Hyper_Adjp_BH))) + geom_point() + scale_color_viridis_c()+ggtitle("Cluster 1 relative signal")
+```
+
+
+
+
+## Cluster 2
+Both the unprocessed signal and the relative signal clusters have differentially expressed GO terms. In the cluster, where the signal rows were scaled, the top 3 significant biological processes are 
+```{r}
+head(bp_cl2_rela,15)
+```
+Each row represents a specific GO term, and the columns provide information about the term's ID, term description, the number of genes associated with the term (count), the expected count of genes based on the background, the fold enrichment (ratio of observed count to expected count), and the p-value or statistical significance.
+In the unscaled signal, these are the top 3 GO processes.
+```{r}
+head(bp_cl2,3)
+```
+The differences between these two methods are small, but clearly the rowscaling affects the outcome.
+
+```{r}
+par(mfrow=c(1,2)) 
+ggplot(head(bp_cl2,15), aes(Hyper_Fold_Enrichment, reorder(name, -Hyper_Adjp_BH), size=Hyper_Foreground_Region_Hits, color=-log10(Hyper_Adjp_BH))) + geom_point() + scale_color_viridis_c()+ggtitle("Cluster 2")
+
+ggplot(head(bp_cl2_rela,15), aes(Hyper_Fold_Enrichment, reorder(name, -Hyper_Adjp_BH), size=Hyper_Foreground_Region_Hits, color=-log10(Hyper_Adjp_BH))) + geom_point() + scale_color_viridis_c()+ggtitle("Cluster 2 relative signals")
+
+```
+
+The results in the cluster 2 relative signals plot indicate that in cluster 2 we find regions that encode genes related to  developmental processes, e.g. brain development, nervous system development and system development. From the heatmaps, we identify that cluster 2 is the cluster where the TF creb1 has stronger signal compared to creb3 and creb3L. Therefore, the presence of creb1 and absence of the other TFs may be relevant to these processes.
+
+## Cluster 3
+
+The Hyper_Foreground_Region_Hits is too low to display in the first plot of cluster 3. These results are included for comparison but are not discussed.
+```{r}
+par(mfrow=c(1,2)) 
+ggplot(head(bp_cl3,15), aes(Hyper_Fold_Enrichment, reorder(name, -Hyper_Adjp_BH), color=-log10(Hyper_Adjp_BH))) + geom_point() + scale_color_viridis_c()+ggtitle("Cluster 3")
+
+ggplot(head(bp_cl3_rela,15), aes(Hyper_Fold_Enrichment, reorder(name, -Hyper_Adjp_BH), size=Hyper_Foreground_Region_Hits, color=-log10(Hyper_Adjp_BH))) + geom_point() + scale_color_viridis_c()+ggtitle("Cluster 3 relative signals")
+```
