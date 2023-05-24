@@ -1,0 +1,243 @@
+---
+title: "DNA methylation and enrichment analysis"
+author: "Kaisu Hiltunen"
+output:
+  html_document: default
+  pdf_document: default
+---
+# Assignment week 11
+
+1. Plot a heatmap of the methylation levels of the genes in top 5 differentially methylated regions (DMR) regions.
+
+2. Run an enrichment analysis (rGREAT) of the genes within DMRs vs all genes 
+of chromosome 22. 
+
+a. Describe what your enrichment analysis is testing exactly & describe the results. 
+```{r, warning=FALSE}
+suppressPackageStartupMessages({
+  library(GenomicRanges)
+  library(epiwraps)
+  library(ggplot2)
+  library(rGREAT)
+  library(AnnotationHub)
+  library(ensembldb)
+  library(bsseq)
+  library(BiocParallel)
+  library(edgeR)
+  library(DMRcate)
+  library(rtracklayer)
+  library(sechm)
+  library(pheatmap)
+  library(viridis)
+  library(data.table)
+})
+```
+
+
+```{r}
+ah <- AnnotationHub()
+set.seed(40)
+```
+
+
+## Load the data
+
+Download:
+```{r, download, eval=FALSE}
+options(timeout = 6000)
+download.file("https://ethz-ins.org/content/w11_practical.zip", "w11_practical.zip")
+unzip("w10.practical.zip")
+```
+
+# Enriched Heatmaps
+
+
+## Differential Methylation Testing
+
+### Bsseq object
+The Bisulfite-sequenncing (BS-seq) data we are looking is from the [bsseqData](https://bioconductor.org/packages/release/data/experiment/html/bsseqData.html) package.
+It contains colon cancer samples with 3 patients with each a colon cancer and normal colon sample. 
+Here we only look at chromosome 22. 
+
+```{r, bsseq}
+bs <- readRDS("./w11_practical/bs.rds")
+pData(bs)
+```
+
+### Testing
+
+Get annotations (hs):
+```{r, message=FALSE}
+ensdb <- ah[["AH109336"]]
+
+### genes ###
+# create a GRanges object of the chromosome 22
+chr22 <-  GRanges(seqnames=Rle(c("22")), 
+                  ranges = IRanges(1, end=195471971))
+
+#retrieve the gene annotations for chromosome 22 using the genes() function
+#specify the output to include columns gene_seq_start, gene_seq_end, gene_names
+#filter to include only the genes within the range of chromosome 22
+genesChr22 <- genes(ensdb, columns=c("gene_seq_start", "gene_seq_end", "gene_name"),
+                    filter=GRangesFilter(chr22))
+
+#set the sequence level style to match UCSC genome browser conventions
+seqlevelsStyle(genesChr22) <- "UCSC"
+
+
+```
+## 1. Heatmap of the methylation levels of the genes in top 5 DMRs
+
+Initial visualisation of the entire DMRs:
+```{r, look at bsseq objects genes}
+# retrieve methylation levels of genes on chr22
+# for testing we only use the 100 first genes (genesChr22[1:100])
+# what="perRegion" indicates that methylation levels should be calculated for each region
+metG <- bsseq::getMeth(bs, 
+                        regions=genesChr22, 
+                        what="perRegion")
+
+# set the column names and rownames
+colnames(metG) <- colnames(bs)
+rownames(metG) <- genesChr22$gene_name
+
+# Remove genes that have missing values (NA) for methylation levels
+metG <- metG[!is.na(rowSums(metG)),]
+
+# Create a data frame named annotationCol that contains the sample annotations for the 'bs' object 
+annotationCol <- as.data.frame(pData(bs)[,c("Type","Pair")])
+
+# add colnames
+rownames(annotationCol) <- colnames(metG)
+
+# creates a heatmap using the pheatmap function
+# It takes the metPr matrix as input  
+pheatmap::pheatmap(metG, 
+                   cluster_rows=TRUE,
+                   cluster_cols=FALSE,
+                   annotation_col=annotationCol,
+                   show_rownames = TRUE,
+                   color=rocket(10))
+```
+
+### Differential methylation testing 
+DMRcate extracts and annotates differentially methylated regions (DMRs) using a kernel-smoothed estimate.
+```{r, dm testing, message=FALSE}
+# General design matrix
+design <- model.matrix(~Type+Pair, data=pData(bs)) 
+
+# Adapt design matrix for methylation data
+methdesign <- modelMatrixMeth(design)
+
+
+# Perform the annotation of the bisulfite sequencing data (bs) using the design matrix (methdesign)
+# The code below calculates various statistics and annotation information for each CpG site in the data
+seqAnnot <- sequencing.annotate(bs, methdesign, all.cov=TRUE, coef="Typenormal")
+
+# The following line performs the differential methylation analysis. It takes annotated sequencing data (seqAnnot)
+# The function specifies the number of comparison groups (C=2), min number of CpGs to define a region (min.cpgs=10), and the p-value cutoff for defining significant DMRs (pcutoff=0.01)
+dmrcateRes <- dmrcate(seqAnnot, C=2, min.cpgs = 10, pcutoff=0.01)
+
+# Extract the DMRs from the dmrcateRes 
+dmrRanges <- extractRanges(dmrcateRes, genome="hg38")
+
+# Save DMR ranges in file
+saveRDS(dmrRanges, "./w11_practical/dmr.rds")
+
+# Filter the DMR ranges to only include those that overlap with genes
+dmrRanges <- dmrRanges[!is.na(dmrRanges$overlapping.genes)]
+# Sort the dmrRanges by the significance level
+dmrRanges <- dmrRanges[order(dmrRanges$min_smoothed_fdr)]
+```
+
+Plot of the Chromosome 22 displaying the top DMR and CpG sites. The green color marks the CpG sites.
+```{r, dm plotting, message=FALSE, warning=FALSE}
+# Plot the first DMR (dmr=1)
+
+
+DMR.plot(dmrRanges, dmr=1, phen.col=c(rep("red", 3), rep("green",3)), CpGs=bs, genome="hg38")
+```
+
+Obtain the coordinates of the genes within DMRs. 
+```{r, get the DM genes}
+# Get the genes within Differentially methylated regions
+
+# Retrieve the indices of the top DMRs based on the minimum smoothed FDR value
+topIdx <- order(dmrRanges$min_smoothed_fdr)
+# Remove any NA values from the gene vector
+dmrRanges <- dmrRanges[!is.na(dmrRanges$overlapping.genes)]
+# Extract the overlapping gene names from the top DMRs and
+# Split the gene names into individual genes and combine them into a vector
+#Reduce the list of genes into the top 5 DMR
+genesDmr <- unlist(tstrsplit(dmrRanges[topIdx[1:5]]$overlapping.genes, split=", "))
+
+# Retrieve the gene information for the DMR genes from the genesChr22 object
+dmrGenes <- genesChr22[genesChr22$gene_name %in% genesDmr,]
+```
+
+Now that we have the list of genes from the top 5 DMRs we retrieve the methylation levels and plot the heatmap.
+```{r, heatmap of genes}
+#Retrieve the methylation levels of the DMR regions from the metG matrix
+metG <- bsseq::getMeth(bs, 
+                        regions=genesChr22, 
+                        what="perRegion")
+
+# set the column names and rownames
+colnames(metG) <- colnames(bs)
+rownames(metG) <- genesChr22$gene_name
+
+# Remove genes that have missing values (NA) for methylation levels
+metG <- metG[!is.na(rowSums(metG)),]
+
+
+# Create a data frame named annotationCol that contains the sample annotations for the 'bs' object 
+annotationCol <- as.data.frame(pData(bs)[,c("Type","Pair")])
+
+# add colnames
+rownames(annotationCol) <- colnames(metG)
+
+# extract the top genes from the metG matrix
+dmrMet <- metG[rownames(metG) %in% dmrGenes$gene_name,]
+
+# creates a heatmap using the pheatmap function
+# It takes the dmrMet matrix as input  
+# creates a heatmap using the pheatmap function
+# It takes the metPr matrix as input  
+pheatmap::pheatmap(dmrMet, 
+                   cluster_rows=TRUE,
+                   cluster_cols=FALSE,
+                   annotation_col=annotationCol,
+                   show_rownames = TRUE,
+                   color=rocket(10))
+```
+
+
+## Discussion
+In the above plot, we see the heatmap of the methylation levels of the genes found in the top 5 DMR regions. However, the results look a bit underwhelming. For example, CDC45 and FBLN1 don't differ that much in colors in between the conditions. It is possible, that the stronger contrast rows in the first visualization didn't contain gene names (we filtered these out) and are thus not included here.
+
+
+## 2. Enrichment analysis of the genes within DMRs
+
+We use rGREAT for the enrichment analysis of the DMR genelist. As a background we use all the genes in chromosome 22.
+```{r, message=FALSE, warning=FALSE}
+#Get the complete gene list for enrichment analysis 
+genesDmr <- unlist(tstrsplit(dmrRanges[topIdx]$overlapping.genes, split=", "))
+# Retrieve the gene information for the DMR genes from the genesChr22 object
+allDMRGenes <- genesChr22[genesChr22$gene_name %in% genesDmr,]
+#sends DMRs and the background of regions (entire chr 22) to a remote server
+res<-rGREAT::submitGreatJob(allDMRGenes, bg=genesChr22, species="hg38")
+table_cluster<-rGREAT::getEnrichmentTables(res)
+
+#get the GO table
+bp<-table_cluster$`GO Biological Process`
+
+#plot the GO terms
+ggplot(head(bp,15), aes(Hyper_Fold_Enrichment, reorder(name, -Hyper_Adjp_BH), size=Hyper_Foreground_Region_Hits, color=-log10(Hyper_Adjp_BH))) + geom_point() + scale_color_viridis_c()
+```
+
+
+### Discussion
+In the above plot, we see the results from the enrichment analysis with the differentially methylated regions. The analysis compares the genomic regions of interest against the background genome and identifies functional annotations that are over-represented in the input regions. Methylation regulates gene expression by recruiting repressing proteins or inhibiting the binding of TFs. Thus, the GO processes that are enriched with methylated genes are expected to be less expressed in the cells.
+
+
+The most enriched biological process GO term is "biological regulation". The other most enriched terms belong to the same umbrella of processes, e.g. "regulation of biological quality", and "regulation of cellular process". This would make sense as in cancer the normal cell regulatory processes are disrupted, leading to overgrowth and disruption of normal cell cycle. Cell communication and signaling are also known to be disrupted in cancer cells.
