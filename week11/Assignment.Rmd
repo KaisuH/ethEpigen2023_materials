@@ -88,8 +88,9 @@ seqlevelsStyle(genesChr22) <- "UCSC"
 ```
 ## 1. Heatmap of the methylation levels of the genes in top 5 DMRs
 
-Initial visualisation of the entire DMRs:
-```{r, look at bsseq objects genes}
+Initial visualisation of all the genes in DMRs:
+
+```{r, look at bsseq objects genes and remove genes without gene names}
 # retrieve methylation levels of genes on chr22
 # for testing we only use the 100 first genes (genesChr22[1:100])
 # what="perRegion" indicates that methylation levels should be calculated for each region
@@ -103,7 +104,8 @@ rownames(metG) <- genesChr22$gene_name
 
 # Remove genes that have missing values (NA) for methylation levels
 metG <- metG[!is.na(rowSums(metG)),]
-
+#remove rows that dont have a name
+metG <- metG[rownames(metG) != "",]
 # Create a data frame named annotationCol that contains the sample annotations for the 'bs' object 
 annotationCol <- as.data.frame(pData(bs)[,c("Type","Pair")])
 
@@ -116,12 +118,14 @@ pheatmap::pheatmap(metG,
                    cluster_rows=TRUE,
                    cluster_cols=FALSE,
                    annotation_col=annotationCol,
-                   show_rownames = TRUE,
+                   show_rownames = FALSE,
                    color=rocket(10))
 ```
 
 ### Differential methylation testing 
-DMRcate extracts and annotates differentially methylated regions (DMRs) using a kernel-smoothed estimate.
+DMRcate extracts and annotates differentially methylated regions (DMRs) using a kernel-smoothed estimate. It identifies genomic regions that exchibit significant differential methylation between groups or conditions. We use the min_smoothed_fdr statistic, aka the minimum smoothed false discovery rate, to sort the differentially methylated genes.
+
+
 ```{r, dm testing, message=FALSE}
 # General design matrix
 design <- model.matrix(~Type+Pair, data=pData(bs)) 
@@ -143,7 +147,6 @@ dmrRanges <- extractRanges(dmrcateRes, genome="hg38")
 
 # Save DMR ranges in file
 saveRDS(dmrRanges, "./w11_practical/dmr.rds")
-
 # Filter the DMR ranges to only include those that overlap with genes
 dmrRanges <- dmrRanges[!is.na(dmrRanges$overlapping.genes)]
 # Sort the dmrRanges by the significance level
@@ -213,7 +216,7 @@ pheatmap::pheatmap(dmrMet,
 
 
 ## Discussion
-In the above plot, we see the heatmap of the methylation levels of the genes found in the top 5 DMR regions. However, the results look a bit underwhelming. For example, CDC45 and FBLN1 don't differ that much in colors in between the conditions. It is possible, that the stronger contrast rows in the first visualization didn't contain gene names (we filtered these out) and are thus not included here.
+In the above plot, we see the heatmap of the methylation levels of the genes found in the top 5 DMR regions. However, the results look a bit underwhelming. For example, CDC45 and FBLN1 don't differ that much in colors in between the conditions.
 
 
 ## 2. Enrichment analysis of the genes within DMRs
